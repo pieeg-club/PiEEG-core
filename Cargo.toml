@@ -1,0 +1,19 @@
+[package]
+name = "pieeg-core"
+version = "0.1.0"
+edition = "2021"
+description = "Native accelerator for PiEEG — compiled signal processing, zero-copy acquisition"
+license = "MIT"
+
+[lib]
+name = "pieeg_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

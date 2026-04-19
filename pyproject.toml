@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "pieeg-core"
+version = "0.1.0"
+description = "Native accelerator for PiEEG — drop in, go faster"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "PiEEG Community"},
+]
+keywords = ["eeg", "bci", "pieeg", "dsp", "native", "accelerator"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.urls]
+Homepage = "https://github.com/pieeg-club/PiEEG-core"
+Repository = "https://github.com/pieeg-club/PiEEG-core"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "pieeg_core"
