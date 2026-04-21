@@ -3,7 +3,7 @@ name = "pieeg-core"
 version = "0.1.0"
 edition = "2021"
 description = "Native accelerator for PiEEG — compiled signal processing, zero-copy acquisition"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [lib]
 name = "pieeg_core"
