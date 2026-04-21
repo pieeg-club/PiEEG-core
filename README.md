@@ -2,6 +2,8 @@
 
 Native accelerator for [PiEEG-server](https://github.com/pieeg-club/PiEEG-server). Compiled Rust replacements for hot paths.
 
+> ⚠️ **Early development · experimental · no warranties.** This project is in early development — APIs, behavior, and packaging may change without notice. Research/hobbyist software provided **as-is**, without warranty of any kind, express or implied. Not a medical device. Not intended for clinical, diagnostic, or safety-critical use. Use at your own risk. See [LICENSE](LICENSE) for full terms.
+
 ## What it accelerates
 
 | Component | What | Speedup |
