@@ -19,12 +19,21 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 [project.urls]
 Homepage = "https://github.com/pieeg-club/PiEEG-core"
 Repository = "https://github.com/pieeg-club/PiEEG-core"
+Issues = "https://github.com/pieeg-club/PiEEG-core/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
