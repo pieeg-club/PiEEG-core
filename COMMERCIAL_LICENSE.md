@@ -10,7 +10,7 @@ If you want to use PiEEG-core in a closed-source product, an internal proprietar
 
 Commercial licensing contact
 
-Contact: pieeg@pieeg.org
+Contact: pieeg@pieeg.com
 
 Typical reasons to request a commercial license
 
