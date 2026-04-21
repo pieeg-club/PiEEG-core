@@ -20,7 +20,7 @@ When installed, `pieeg-server` detects it and switches to the compiled implement
 pip install pieeg-core
 ```
 
-Pre-built wheels are published for Linux (x86_64, aarch64, armv7 — including Raspberry Pi), Windows (x86_64) and macOS (x86_64, arm64) on CPython 3.10–3.13.
+Pre-built wheels are published for Linux (x86_64, aarch64, armv7 — including Raspberry Pi), Windows (x86_64) and macOS (arm64) on CPython 3.10–3.13.
 
 ## Build from source
 
