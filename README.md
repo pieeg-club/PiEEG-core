@@ -8,11 +8,19 @@ Native accelerator for [PiEEG-server](https://github.com/pieeg-club/PiEEG-server
 
 | Component | What | Speedup |
 |-----------|------|---------|
-| `HampelFilter` | Per-channel spike rejection (median + MAD) | ~20x |
-| `MultichannelFilter` | Butterworth IIR bandpass (SOS cascade) | ~15x |
-| `decode_channels` | 24-bit ADC → µV conversion | ~30x |
+| `MultichannelFilter` | Butterworth IIR bandpass (SOS cascade) | ~1057x |
+| `HampelFilter` | Per-channel spike rejection (median + MAD) | ~15x |
+| `decode_channels` | 24-bit ADC → µV conversion | ~9x |
 
 When installed, `pieeg-server` detects it and switches to the compiled implementations automatically. No config needed.
+
+## Benchmark
+
+| Hot path | Python | pieeg-core | Speedup |
+|----------|--------|------------|---------|
+| `MultichannelFilter` (bandpass 1–40 Hz) | 992 samples/s | 1,048,658 samples/s | ~1057× |
+| `HampelFilter` (spike removal) | 24,619 samples/s | 358,361 samples/s | ~15× |
+| `decode_channels` (24-bit SPI → µV) | 121,352 samples/s | 1,134,301 samples/s | ~9× |
 
 ## Install
 
