@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pieeg-core"
-version = "0.1.1"
+version = "0.2.0"
 description = "Native accelerator for PiEEG — drop in, go faster"
 readme = "README.md"
 requires-python = ">=3.10"

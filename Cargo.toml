@@ -1,6 +1,6 @@
 [package]
 name = "pieeg-core"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Native accelerator for PiEEG — compiled signal processing, zero-copy acquisition"
 license = "AGPL-3.0-or-later"
