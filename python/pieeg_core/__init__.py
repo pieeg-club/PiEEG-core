@@ -24,3 +24,12 @@ __all__ = [
     "decode_channels",
     "__version__",
 ]
+
+# Native SPI/GPIO acquisition loop — only compiled into the Raspberry Pi wheels
+# (built with the `hardware` Cargo feature). Absent on Windows/macOS builds.
+try:
+    from .pieeg_core import NativeAcquisition
+except ImportError:
+    pass
+else:
+    __all__.append("NativeAcquisition")

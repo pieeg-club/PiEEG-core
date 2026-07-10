@@ -1,7 +1,19 @@
+// Only used by the hardware acquisition loop; compiled for tests so the
+// CONFIG1 mapping stays covered off-Pi without tripping dead-code warnings.
+#[cfg(any(feature = "hardware", test))]
+mod adc_config;
 mod bandpass;
 mod decode;
 mod hampel;
 mod ring;
+
+// Consumed only by the hardware acquisition loop; unused when that feature is
+// off (e.g. off-Pi dev builds), so silence dead-code warnings in that case.
+#[cfg_attr(not(feature = "hardware"), allow(dead_code))]
+mod spsc;
+
+#[cfg(feature = "hardware")]
+mod acquisition;
 
 use pyo3::prelude::*;
 
@@ -132,5 +144,7 @@ fn pieeg_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHampelFilter>()?;
     m.add_class::<PyMultichannelFilter>()?;
     m.add_function(wrap_pyfunction!(decode_channels, m)?)?;
+    #[cfg(feature = "hardware")]
+    m.add_class::<acquisition::PyNativeAcquisition>()?;
     Ok(())
 }
