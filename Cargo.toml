@@ -11,6 +11,17 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
+crossbeam-queue = "0.3"
+
+# Hardware I/O (Linux-only). Pulled in only when the `hardware` feature is
+# enabled — e.g. the aarch64 Raspberry Pi wheel build. Off-Pi dev builds leave
+# the feature off, so these never compile on Windows/macOS.
+spidev = { version = "0.6", optional = true }
+gpio-cdev = { version = "0.6", optional = true }
+
+[features]
+# Native SPI/GPIO acquisition loop. Enable when building for the Raspberry Pi.
+hardware = ["dep:spidev", "dep:gpio-cdev"]
 
 [profile.release]
 opt-level = 3
