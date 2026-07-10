@@ -135,4 +135,92 @@ mod tests {
         assert_eq!(q.dropped(), 1);
         assert_eq!(q.len(), 2);
     }
+
+    /// Sustained throughput micro-benchmark for the acquisition queue.
+    ///
+    /// Ignored by default (it's a benchmark, not a correctness test). Run it in
+    /// release for meaningful numbers:
+    ///
+    /// ```text
+    /// cargo test --release --lib -- --ignored --nocapture bench_queue_throughput
+    /// ```
+    ///
+    /// It mirrors the real hot path: a producer thread pushes 16-channel frames
+    /// while the consumer drains them in `read_batch`-sized (256) chunks. The
+    /// producer backs off instead of dropping, so we measure loss-free
+    /// throughput. The takeaway is the headroom factor over the 2 kSPS × 16 ch
+    /// target (2000 frames/s): the software queue is orders of magnitude faster
+    /// than the per-sample hardware budget, so real-world loss is SPI/DRDY
+    /// timing — never this layer.
+    #[test]
+    #[ignore]
+    fn bench_queue_throughput() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Instant;
+
+        const TARGET_FPS: f64 = 2000.0; // 2 kSPS × 16 ch = 2000 frames/s
+        const N: u64 = 5_000_000; // frames to move
+        const CAP: usize = 8192;
+
+        let q = Arc::new(SampleQueue::new(CAP));
+        let producer_q = Arc::clone(&q);
+
+        let start = Instant::now();
+        let producer = thread::spawn(move || {
+            let sample = [12.5f64; MAX_CH];
+            let mut seq = 0u64;
+            while seq < N {
+                // Back off rather than drop, so this measures sustained,
+                // loss-free throughput (a consumer that keeps up).
+                while producer_q.len() >= CAP - 256 {
+                    std::hint::spin_loop();
+                }
+                seq += 1;
+                producer_q.push(Frame::new(seq, seq as f64 * 5e-4, &sample));
+            }
+        });
+
+        // Consumer: drain in 256-frame batches (as `read_batch` does) and
+        // verify strict ordering — a gap would mean the queue lost a frame.
+        let mut received = 0u64;
+        let mut last_seq = 0u64;
+        let mut gaps = 0u64;
+        while received < N {
+            let mut batch = 0;
+            while batch < 256 {
+                match q.pop() {
+                    Some(f) => {
+                        if last_seq != 0 && f.seq != last_seq + 1 {
+                            gaps += f.seq - last_seq - 1;
+                        }
+                        last_seq = f.seq;
+                        received += 1;
+                        batch += 1;
+                    }
+                    None => break,
+                }
+            }
+            if batch == 0 {
+                std::hint::spin_loop();
+            }
+        }
+        let secs = start.elapsed().as_secs_f64();
+        producer.join().unwrap();
+
+        let fps = N as f64 / secs;
+        println!("\n── SampleQueue throughput ──");
+        println!("frames moved      : {N}");
+        println!("elapsed           : {secs:.3} s");
+        println!(
+            "throughput        : {fps:.3e} frames/s  ({:.0}× the {TARGET_FPS:.0} fps target)",
+            fps / TARGET_FPS
+        );
+        println!("per-frame cost    : {:.1} ns", secs / N as f64 * 1e9);
+        println!("overflow drops    : {}", q.dropped());
+        println!("seq gaps          : {gaps}");
+
+        assert_eq!(gaps, 0, "queue must preserve ordering with no gaps");
+        assert_eq!(q.dropped(), 0, "back-pressured producer should not drop");
+    }
 }
