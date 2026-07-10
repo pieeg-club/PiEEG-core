@@ -1,3 +1,6 @@
+// Only used by the hardware acquisition loop; compiled for tests so the
+// CONFIG1 mapping stays covered off-Pi without tripping dead-code warnings.
+#[cfg(any(feature = "hardware", test))]
 mod adc_config;
 mod bandpass;
 mod decode;

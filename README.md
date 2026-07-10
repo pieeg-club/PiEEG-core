@@ -48,7 +48,7 @@ acq.start()               # opens hardware, configures the ADC(s), spawns the re
 try:
     while True:
         # Drain up to max_frames buffered samples in FIFO order.
-        for timestamp, channels in acq.read_batch(max_frames=256):
+        for seq, timestamp, channels in acq.read_batch(max_frames=256):
             ...           # channels is a list of microvolts, len == num_channels
 
         if acq.dropped:   # samples lost to consumer back-pressure (ring overflow)
@@ -62,7 +62,7 @@ finally:
 | Member | Description |
 |--------|-------------|
 | `start()` | Open the hardware, configure the ADC(s) and spawn the read thread. |
-| `read_batch(max_frames=256)` | Drain up to `max_frames` buffered samples as a list of `(timestamp, [ch1..chN])` tuples in FIFO order. Releases the GIL. |
+| `read_batch(max_frames=256)` | Drain up to `max_frames` buffered samples as a list of `(seq, timestamp, [ch1..chN])` tuples in FIFO order. Releases the GIL. |
 | `stop()` | Signal the read thread to stop and join it. Also runs on drop. |
 | `pending` | Frames currently buffered and waiting to be read. |
 | `dropped` | Frames dropped because the consumer fell behind (ring overflow). |

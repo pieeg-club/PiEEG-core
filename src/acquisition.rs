@@ -88,8 +88,20 @@ impl Reader {
     #[inline]
     fn wait_drdy2(&self) {
         if let Some(d2) = &self.drdy2 {
-            while d2.get_value().unwrap_or(1) == 0 {} // wait out previous low
-            while d2.get_value().unwrap_or(0) == 1 {} // wait for HIGH→LOW
+            // wait out previous low
+            while d2.get_value().unwrap_or(1) == 0 {
+                if self.stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::hint::spin_loop();
+            }
+            // wait for HIGH→LOW
+            while d2.get_value().unwrap_or(0) == 1 {
+                if self.stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::hint::spin_loop();
+            }
         }
     }
 
@@ -135,8 +147,11 @@ impl Reader {
             }
             armed = false;
 
+            // Count every triggered sample so gaps in `seq` reliably signal
+            // decode failures (corrupted frames), matching the documented
+            // contract. Only successfully-decoded frames are pushed.
+            self.seq += 1;
             if let Some(channels) = self.read_sample() {
-                self.seq += 1;
                 let t = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs_f64())
