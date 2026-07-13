@@ -358,7 +358,7 @@ impl PyNativeAcquisition {
         num_channels = 16,
         sample_rate = 250,
         gpiochip = "/dev/gpiochip4".to_string(),
-        spi_speed_hz = 8_000_000,
+        spi_speed_hz = 4_000_000,
         cs_pin = 19,
         drdy_pin = 26,
         drdy2_pin = 13,
