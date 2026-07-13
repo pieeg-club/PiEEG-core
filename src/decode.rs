@@ -14,10 +14,15 @@ const VREF_UV: f64 = 4_500_000.0; // 4.5V in microvolts
 ///
 /// Layout: bytes 0–2 = status, bytes 3–26 = 8 × 3 bytes (24-bit MSB-first).
 /// Returns microvolts as `[f64; 8]`.
+///
+/// Returns a fixed-size array (no heap allocation) so the acquisition hot path
+/// never touches the allocator — the allocator's slow path under
+/// `mlockall`/`SCHED_FIFO` is a source of tail jitter we don't want per sample.
+/// Channels whose 3 bytes fall outside a short `raw` are left at 0.0.
 #[inline]
-pub fn decode_channels(raw: &[u8]) -> Vec<f64> {
-    let mut channels = Vec::with_capacity(8);
-    for i in (3..27).step_by(3) {
+pub fn decode_channels(raw: &[u8]) -> [f64; 8] {
+    let mut channels = [0.0f64; 8];
+    for (idx, i) in (3..27).step_by(3).enumerate() {
         if i + 2 >= raw.len() {
             break;
         }
@@ -31,7 +36,7 @@ pub fn decode_channels(raw: &[u8]) -> Vec<f64> {
 
         let uv = VREF_UV * (signed_val as f64 / FULL_SCALE_PLUS_1);
         // Round to 2 decimal places (matches Python behavior)
-        channels.push((uv * 100.0).round() / 100.0);
+        channels[idx] = (uv * 100.0).round() / 100.0;
     }
     channels
 }

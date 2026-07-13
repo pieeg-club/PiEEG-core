@@ -18,10 +18,13 @@ crossbeam-queue = "0.3"
 # the feature off, so these never compile on Windows/macOS.
 spidev = { version = "0.6", optional = true }
 gpio-cdev = { version = "0.6", optional = true }
+# Raw syscalls for the real-time read thread: SCHED_FIFO, CPU affinity,
+# mlockall and poll() on the DRDY edge-event fd. Linux-only, hardware-gated.
+libc = { version = "0.2", optional = true }
 
 [features]
 # Native SPI/GPIO acquisition loop. Enable when building for the Raspberry Pi.
-hardware = ["dep:spidev", "dep:gpio-cdev"]
+hardware = ["dep:spidev", "dep:gpio-cdev", "dep:libc"]
 
 [profile.release]
 opt-level = 3
