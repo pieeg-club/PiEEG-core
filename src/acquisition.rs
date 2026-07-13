@@ -29,7 +29,7 @@ use spidev::{SpiModeFlags, Spidev, SpidevOptions};
 
 use crate::adc_config::sample_rate_to_config1;
 use crate::decode::decode_channels;
-use crate::spsc::{Frame, SampleQueue};
+use crate::spsc::{Frame, SampleQueue, MAX_CH};
 
 const BYTES_PER_READ: usize = 27; // 3 status + 8 channels × 3 bytes
 
@@ -121,12 +121,14 @@ impl Reader {
         }
     }
 
-    /// Read one sample (8 or 16 channels). Returns `None` on a status-header
-    /// mismatch from chip 2 (corrupted frame).
-    fn read_sample(&mut self) -> Option<Vec<f64>> {
+    /// Read one sample (8 or 16 channels) into `out`, returning the channel
+    /// count. Returns `None` on a status-header mismatch from chip 2 (corrupted
+    /// frame). Writing into a caller-owned stack buffer keeps the hot path
+    /// allocation-free.
+    fn read_sample(&mut self, out: &mut [f64; MAX_CH]) -> Option<usize> {
         let mut raw1 = [0u8; BYTES_PER_READ];
         self.spi1.read(&mut raw1).ok()?;
-        let mut channels = decode_channels(&raw1);
+        out[..8].copy_from_slice(&decode_channels(&raw1));
 
         if self.num_channels == 16 {
             self.wait_drdy2();
@@ -139,9 +141,11 @@ impl Reader {
             if (raw2[0], raw2[1], raw2[2]) != EXPECTED_STATUS {
                 return None;
             }
-            channels.extend(decode_channels(&raw2));
+            out[8..16].copy_from_slice(&decode_channels(&raw2));
+            Some(16)
+        } else {
+            Some(8)
         }
-        Some(channels)
     }
 
     /// Wait on kernel DRDY falling-edge events and read until stopped.
@@ -156,6 +160,8 @@ impl Reader {
         apply_realtime(self.rt_priority, self.cpu_affinity);
 
         let drdy_fd = self.drdy1.as_raw_fd();
+        // Reused across every sample so the read loop never allocates.
+        let mut buf = [0.0f64; MAX_CH];
         while !self.stop.load(Ordering::Relaxed) {
             match poll_readable(drdy_fd, STOP_POLL_TIMEOUT_MS) {
                 PollResult::Ready => {}
@@ -176,12 +182,12 @@ impl Reader {
             // decode failures (corrupted frames), matching the documented
             // contract. Only successfully-decoded frames are pushed.
             self.seq += 1;
-            if let Some(channels) = self.read_sample() {
+            if let Some(n) = self.read_sample(&mut buf) {
                 let t = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs_f64())
                     .unwrap_or(0.0);
-                self.queue.push(Frame::new(self.seq, t, &channels));
+                self.queue.push(Frame::new(self.seq, t, &buf[..n]));
             }
         }
     }
@@ -352,7 +358,7 @@ impl PyNativeAcquisition {
         num_channels = 16,
         sample_rate = 250,
         gpiochip = "/dev/gpiochip4".to_string(),
-        spi_speed_hz = 4_000_000,
+        spi_speed_hz = 8_000_000,
         cs_pin = 19,
         drdy_pin = 26,
         drdy2_pin = 13,

@@ -133,7 +133,7 @@ impl PyMultichannelFilter {
 /// Returns a list of microvolts (float).
 #[pyfunction]
 fn decode_channels(raw: Vec<u8>) -> Vec<f64> {
-    decode::decode_channels(&raw)
+    decode::decode_channels(&raw).to_vec()
 }
 
 // ── Module ──────────────────────────────────────────────────────────
