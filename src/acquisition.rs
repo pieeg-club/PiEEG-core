@@ -17,7 +17,7 @@
 
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -62,8 +62,10 @@ struct Config {
     gpiochip: String,
     spi_speed_hz: u32,
     cs_pin: u32,
+    cs2_pin: u32,
     drdy_pin: u32,
     drdy2_pin: u32,
+    drdy3_pin: u32,
     /// SCHED_FIFO real-time priority for the read thread (1–99). `0` disables
     /// the elevation and the thread stays at normal scheduling.
     rt_priority: i32,
@@ -80,13 +82,17 @@ struct Reader {
     /// late thread never *misses* an edge — the kernel latches every one.
     drdy1: LineEventHandle,
     drdy2: Option<LineHandle>,
+    _drdy3: Option<LineHandle>,
     /// Chip-select for ADC chip 2 (GPIO19 on the PiEEG shield). `None` in
     /// 8-channel mode where the kernel drives CE0 for chip 1.
     cs: Option<LineHandle>,
+    /// Chip-select for ADC chip 3 (GPIO21 on the PiEEG-24 shield).
+    cs2: Option<LineHandle>,
     num_channels: usize,
     rt_priority: i32,
     cpu_affinity: i32,
     queue: Arc<SampleQueue>,
+    bad_frames: Arc<[AtomicU64; 3]>,
     stop: Arc<AtomicBool>,
     seq: u64,
 }
@@ -96,6 +102,13 @@ impl Reader {
     fn cs_set(&self, value: u8) {
         if let Some(cs) = &self.cs {
             let _ = cs.set_value(value);
+        }
+    }
+
+    #[inline]
+    fn cs2_set(&self, value: u8) {
+        if let Some(cs2) = &self.cs2 {
+            let _ = cs2.set_value(value);
         }
     }
 
@@ -121,13 +134,17 @@ impl Reader {
         }
     }
 
-    /// Read one sample (8 or 16 channels) into `out`, returning the channel
-    /// count. Returns `None` on a status-header mismatch from chip 2 (corrupted
-    /// frame). Writing into a caller-owned stack buffer keeps the hot path
-    /// allocation-free.
+    /// Read one sample (8, 16, or 24 channels) into `out`, returning the channel
+    /// count. Returns `None` on a status-header mismatch (corrupted frame) and
+    /// increments the per-chip `bad_frames` counter. Writing into a caller-owned
+    /// stack buffer keeps the hot path allocation-free.
     fn read_sample(&mut self, out: &mut [f64; MAX_CH]) -> Option<usize> {
         let mut raw1 = [0u8; BYTES_PER_READ];
         self.spi1.read(&mut raw1).ok()?;
+        let ok1 = (raw1[0] & 0xF0) == 0xC0;
+        if !ok1 {
+            self.bad_frames[0].fetch_add(1, Ordering::Relaxed);
+        }
         out[..8].copy_from_slice(&decode_channels(&raw1));
 
         if self.num_channels == 16 {
@@ -138,12 +155,49 @@ impl Reader {
             self.cs_set(1);
             res.ok()?;
 
+            if (raw2[0] & 0xF0) != 0xC0 {
+                self.bad_frames[1].fetch_add(1, Ordering::Relaxed);
+            }
             if (raw2[0], raw2[1], raw2[2]) != EXPECTED_STATUS {
                 return None;
             }
             out[8..16].copy_from_slice(&decode_channels(&raw2));
             Some(16)
+        } else if self.num_channels == 24 {
+            // On PiEEG-24 all 3 chips share chip 1's clock and start in
+            // 3 -> 2 -> 1 order, so when chip 1's DRDY falls, chips 2 and 3
+            // already have their conversion ready.
+            self.cs_set(0);
+            let mut raw2 = [0u8; BYTES_PER_READ];
+            let res2 = self.spi2.as_mut().unwrap().read(&mut raw2);
+            self.cs_set(1);
+            res2.ok()?;
+
+            self.cs2_set(0);
+            let mut raw3 = [0u8; BYTES_PER_READ];
+            let res3 = self.spi2.as_mut().unwrap().read(&mut raw3);
+            self.cs2_set(1);
+            res3.ok()?;
+
+            let ok2 = (raw2[0] & 0xF0) == 0xC0;
+            let ok3 = (raw3[0] & 0xF0) == 0xC0;
+            if !ok2 {
+                self.bad_frames[1].fetch_add(1, Ordering::Relaxed);
+            }
+            if !ok3 {
+                self.bad_frames[2].fetch_add(1, Ordering::Relaxed);
+            }
+            if !ok1 || !ok2 || !ok3 {
+                return None;
+            }
+
+            out[8..16].copy_from_slice(&decode_channels(&raw2));
+            out[16..24].copy_from_slice(&decode_channels(&raw3));
+            Some(24)
         } else {
+            if !ok1 {
+                return None;
+            }
             Some(8)
         }
     }
@@ -294,19 +348,31 @@ fn write_reg(spi: &mut Spidev, cs: Option<&LineHandle>, reg: u8, val: u8) -> std
 
 /// Full ADC initialisation for one chip — port of `_configure_adc`, with the
 /// data rate driven by `sample_rate`.
+///
+/// When `clk_en` is true (chip 1 on PiEEG-24), sets `CONFIG1.CLK_EN` (bit 5)
+/// immediately after `SDATAC` so the internal oscillator drives the shared
+/// `CLK` net for chips 2 and 3.
 fn configure_chip(
     spi: &mut Spidev,
     cs: Option<&LineHandle>,
     sample_rate: u32,
+    clk_en: bool,
+    start_immediately: bool,
 ) -> std::io::Result<()> {
+    let cfg1 = sample_rate_to_config1(sample_rate) | if clk_en { 0x20 } else { 0x00 };
+
     send_cmd(spi, cs, CMD_WAKEUP)?;
     send_cmd(spi, cs, CMD_STOP)?;
     send_cmd(spi, cs, CMD_RESET)?;
     thread::sleep(Duration::from_millis(10)); // let the ADC settle after reset
     send_cmd(spi, cs, CMD_SDATAC)?;
+    if clk_en {
+        thread::sleep(Duration::from_millis(1));
+        write_reg(spi, cs, CONFIG1, cfg1)?;
+    }
 
     write_reg(spi, cs, 0x14, 0x80)?; // GPIO
-    write_reg(spi, cs, CONFIG1, sample_rate_to_config1(sample_rate))?;
+    write_reg(spi, cs, CONFIG1, cfg1)?;
     write_reg(spi, cs, CONFIG2, 0xD4)?;
     write_reg(spi, cs, CONFIG3, 0xFF)?;
     write_reg(spi, cs, 0x04, 0x00)?;
@@ -323,8 +389,10 @@ fn configure_chip(
         write_reg(spi, cs, ch_reg, 0x00)?;
     }
 
-    send_cmd(spi, cs, CMD_RDATAC)?;
-    send_cmd(spi, cs, CMD_START)?;
+    if start_immediately {
+        send_cmd(spi, cs, CMD_RDATAC)?;
+        send_cmd(spi, cs, CMD_START)?;
+    }
     Ok(())
 }
 
@@ -347,6 +415,7 @@ fn open_spi(path: &str, speed_hz: u32) -> std::io::Result<Spidev> {
 pub struct PyNativeAcquisition {
     cfg: Config,
     queue: Arc<SampleQueue>,
+    bad_frames: Arc<[AtomicU64; 3]>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
@@ -365,6 +434,8 @@ impl PyNativeAcquisition {
         queue_capacity = 0,
         rt_priority = 80,
         cpu_affinity = -1,
+        cs2_pin = 21,
+        drdy3_pin = 5,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -378,10 +449,12 @@ impl PyNativeAcquisition {
         queue_capacity: usize,
         rt_priority: i32,
         cpu_affinity: i32,
+        cs2_pin: u32,
+        drdy3_pin: u32,
     ) -> PyResult<Self> {
-        if num_channels != 8 && num_channels != 16 {
+        if num_channels != 8 && num_channels != 16 && num_channels != 24 {
             return Err(PyRuntimeError::new_err(
-                "num_channels must be 8 or 16",
+                "num_channels must be 8, 16, or 24",
             ));
         }
         // Default: ~4 seconds of headroom so Python draining every few ms
@@ -398,12 +471,15 @@ impl PyNativeAcquisition {
                 gpiochip,
                 spi_speed_hz,
                 cs_pin,
+                cs2_pin,
                 drdy_pin,
                 drdy2_pin,
+                drdy3_pin,
                 rt_priority,
                 cpu_affinity,
             },
             queue: Arc::new(SampleQueue::new(cap)),
+            bad_frames: Arc::new([AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)]),
             stop: Arc::new(AtomicBool::new(false)),
             handle: None,
         })
@@ -436,9 +512,8 @@ impl PyNativeAcquisition {
         let mut spi1 = open_spi("/dev/spidev0.0", cfg.spi_speed_hz)
             .map_err(|e| PyRuntimeError::new_err(format!("open spidev0.0: {e}")))?;
 
-        // Chip 2 (16-channel mode) — second SPI device plus GPIO19 chip-select
-        // and its own DRDY line.
-        let (mut spi2, drdy2, cs) = if cfg.num_channels == 16 {
+        // Chip 2 (16/24-channel mode) and Chip 3 (24-channel mode).
+        let (mut spi2, drdy2, drdy3, cs, cs2) = if cfg.num_channels == 16 || cfg.num_channels == 24 {
             let spi2 = open_spi("/dev/spidev0.1", cfg.spi_speed_hz)
                 .map_err(|e| PyRuntimeError::new_err(format!("open spidev0.1: {e}")))?;
             let drdy2 = chip
@@ -451,31 +526,79 @@ impl PyNativeAcquisition {
                 .get_line(cfg.cs_pin)
                 .and_then(|l| l.request(LineRequestFlags::OUTPUT, 1, "pieeg_cs"))
                 .map_err(|e| PyRuntimeError::new_err(format!("CS line {}: {e}", cfg.cs_pin)))?;
-            (Some(spi2), Some(drdy2), Some(cs))
+            let (drdy3, cs2) = if cfg.num_channels == 24 {
+                let d3 = chip
+                    .get_line(cfg.drdy3_pin)
+                    .and_then(|l| l.request(LineRequestFlags::INPUT, 0, "pieeg_drdy3"))
+                    .map_err(|e| {
+                        PyRuntimeError::new_err(format!("DRDY3 line {}: {e}", cfg.drdy3_pin))
+                    })?;
+                let c2 = chip
+                    .get_line(cfg.cs2_pin)
+                    .and_then(|l| l.request(LineRequestFlags::OUTPUT, 1, "pieeg_cs2"))
+                    .map_err(|e| PyRuntimeError::new_err(format!("CS2 line {}: {e}", cfg.cs2_pin)))?;
+                (Some(d3), Some(c2))
+            } else {
+                (None, None)
+            };
+            (Some(spi2), Some(drdy2), drdy3, Some(cs), cs2)
         } else {
-            (None, None, None)
+            (None, None, None, None, None)
         };
 
-        // Configure ADC(s). Chip 1 uses the kernel-driven CE0 (no manual CS);
-        // chip 2 is selected via GPIO19.
-        configure_chip(&mut spi1, None, cfg.sample_rate)
-            .map_err(|e| PyRuntimeError::new_err(format!("configure chip 1: {e}")))?;
-        if let (Some(spi2), Some(cs)) = (spi2.as_mut(), cs.as_ref()) {
-            configure_chip(spi2, Some(cs), cfg.sample_rate)
+        // Configure ADC(s).
+        if cfg.num_channels == 24 {
+            // Chip 1 outputs the shared CLK net (CONFIG1.CLK_EN=1). Wait 200 ms
+            // for chips 2/3 power-on reset, configure them, then start 3 -> 2 -> 1.
+            configure_chip(&mut spi1, None, cfg.sample_rate, true, false)
+                .map_err(|e| PyRuntimeError::new_err(format!("configure chip 1: {e}")))?;
+            thread::sleep(Duration::from_millis(200));
+            let s2 = spi2.as_mut().unwrap();
+            let c1 = cs.as_ref().unwrap();
+            let c2 = cs2.as_ref().unwrap();
+            configure_chip(s2, Some(c1), cfg.sample_rate, false, false)
                 .map_err(|e| PyRuntimeError::new_err(format!("configure chip 2: {e}")))?;
+            configure_chip(s2, Some(c2), cfg.sample_rate, false, false)
+                .map_err(|e| PyRuntimeError::new_err(format!("configure chip 3: {e}")))?;
+            // Start all in 3 -> 2 -> 1 order
+            send_cmd(s2, Some(c2), CMD_RDATAC)
+                .map_err(|e| PyRuntimeError::new_err(format!("RDATAC chip 3: {e}")))?;
+            send_cmd(s2, Some(c1), CMD_RDATAC)
+                .map_err(|e| PyRuntimeError::new_err(format!("RDATAC chip 2: {e}")))?;
+            send_cmd(&mut spi1, None, CMD_RDATAC)
+                .map_err(|e| PyRuntimeError::new_err(format!("RDATAC chip 1: {e}")))?;
+            send_cmd(s2, Some(c2), CMD_START)
+                .map_err(|e| PyRuntimeError::new_err(format!("START chip 3: {e}")))?;
+            send_cmd(s2, Some(c1), CMD_START)
+                .map_err(|e| PyRuntimeError::new_err(format!("START chip 2: {e}")))?;
+            send_cmd(&mut spi1, None, CMD_START)
+                .map_err(|e| PyRuntimeError::new_err(format!("START chip 1: {e}")))?;
+        } else {
+            configure_chip(&mut spi1, None, cfg.sample_rate, false, true)
+                .map_err(|e| PyRuntimeError::new_err(format!("configure chip 1: {e}")))?;
+            if let (Some(spi2), Some(cs)) = (spi2.as_mut(), cs.as_ref()) {
+                configure_chip(spi2, Some(cs), cfg.sample_rate, false, true)
+                    .map_err(|e| PyRuntimeError::new_err(format!("configure chip 2: {e}")))?;
+            }
         }
 
         self.stop.store(false, Ordering::Relaxed);
+        for b in self.bad_frames.iter() {
+            b.store(0, Ordering::Relaxed);
+        }
         let reader = Reader {
             spi1,
             spi2,
             drdy1,
             drdy2,
+            _drdy3: drdy3,
             cs,
+            cs2,
             num_channels: cfg.num_channels,
             rt_priority: cfg.rt_priority,
             cpu_affinity: cfg.cpu_affinity,
             queue: Arc::clone(&self.queue),
+            bad_frames: Arc::clone(&self.bad_frames),
             stop: Arc::clone(&self.stop),
             seq: 0,
         };
@@ -513,6 +636,16 @@ impl PyNativeAcquisition {
     #[getter]
     fn dropped(&self) -> u64 {
         self.queue.dropped()
+    }
+
+    /// Per-chip bad frame counts (frames where status byte was not 0xC_).
+    #[getter]
+    fn bad_frames(&self) -> [u64; 3] {
+        [
+            self.bad_frames[0].load(Ordering::Relaxed),
+            self.bad_frames[1].load(Ordering::Relaxed),
+            self.bad_frames[2].load(Ordering::Relaxed),
+        ]
     }
 
     /// Frames currently buffered and waiting to be read.

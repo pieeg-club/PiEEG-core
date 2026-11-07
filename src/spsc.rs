@@ -16,8 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 
-/// Maximum channel count a single frame can carry (PiEEG-16 = 2 × 8).
-pub const MAX_CH: usize = 16;
+/// Maximum channel count a single frame can carry (up to 32 channels; covers PiEEG-8/16/24).
+pub const MAX_CH: usize = 32;
 
 /// One decoded multi-channel sample.
 ///
