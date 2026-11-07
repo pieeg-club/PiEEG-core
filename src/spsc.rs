@@ -110,6 +110,16 @@ mod tests {
     }
 
     #[test]
+    fn frame_copies_24_channels() {
+        let ch: Vec<f64> = (1..=24).map(|x| x as f64 * 1.5).collect();
+        let f = Frame::new(42, 1.25, &ch);
+        assert_eq!(f.seq, 42);
+        assert_eq!(f.nch, 24);
+        assert_eq!(&f.data[..24], ch.as_slice());
+        assert_eq!(f.data[24], 0.0);
+    }
+
+    #[test]
     fn frame_truncates_beyond_max() {
         let big = vec![7.0f64; MAX_CH + 4];
         let f = Frame::new(9, 1.0, &big);

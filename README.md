@@ -34,13 +34,15 @@ This path is compiled only into the Linux/Raspberry Pi wheels (built with the `h
 from pieeg_core import NativeAcquisition
 
 acq = NativeAcquisition(
-    num_channels=16,      # 8 (one ADS1299) or 16 (two, PiEEG-16)
+    num_channels=16,      # 8 (PiEEG-8), 16 (PiEEG-16), or 24 (PiEEG-24)
     sample_rate=250,      # 250, 500, 1000, 2000 or 4000 SPS
     gpiochip="/dev/gpiochip4",
     spi_speed_hz=4_000_000,
-    cs_pin=19,            # chip-select for ADC 2 (16-ch mode)
+    cs_pin=19,            # chip-select for ADC 2 (16/24-ch mode)
+    cs2_pin=21,           # chip-select for ADC 3 (24-ch mode)
     drdy_pin=26,          # DRDY for ADC 1
     drdy2_pin=13,         # DRDY for ADC 2
+    drdy3_pin=5,          # DRDY for ADC 3 (24-ch mode)
     queue_capacity=0,     # 0 → auto (~4 s of headroom)
 )
 
