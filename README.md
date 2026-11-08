@@ -26,9 +26,9 @@ On the Raspberry Pi it additionally provides a **native acquisition loop** (`Nat
 
 ## Native acquisition (Raspberry Pi)
 
-Beyond the drop-in DSP accelerators, pieeg-core ships a hard-real-time acquisition loop that reads the ADS1299(s) directly. A dedicated OS thread owns the SPI buses and GPIO lines, polls DRDY, reads both ADC chips, decodes to microvolts and pushes frames into a lock-free single-producer/single-consumer queue — **all with the GIL released**. Acquisition timing is therefore fully decoupled from CPython's GIL and garbage collector.
+Beyond the drop-in DSP accelerators, pieeg-core ships a hard-real-time acquisition loop that reads the ADS1299(s) directly (supporting PiEEG-8, PiEEG-16, and PiEEG-24). A dedicated OS thread owns the SPI buses and GPIO lines, polls DRDY, reads the ADC chip(s), decodes to microvolts and pushes frames into a lock-free single-producer/single-consumer queue — **all with the GIL released**. Acquisition timing is therefore fully decoupled from CPython's GIL and garbage collector.
 
-This path is compiled only into the Linux/Raspberry Pi wheels (built with the `hardware` Cargo feature); it depends on `spidev` and `gpio-cdev`, so it is absent from the Windows/macOS wheels.
+This path is compiled into the Linux/Raspberry Pi wheels (built with the `hardware` Cargo feature); it depends on `spidev` and `gpio-cdev`, so it is absent from Windows builds.
 
 ```python
 from pieeg_core import NativeAcquisition
@@ -68,6 +68,7 @@ finally:
 | `stop()` | Signal the read thread to stop and join it. Also runs on drop. |
 | `pending` | Frames currently buffered and waiting to be read. |
 | `dropped` | Frames dropped because the consumer fell behind (ring overflow). |
+| `bad_frames` | Per-chip `[chip1, chip2, chip3]` count of frames dropped due to corrupted status headers. |
 
 The register-configuration sequence is a faithful port of `pieeg_server`'s `PiEEGHardware._configure_adc`, with the CONFIG1 data rate parameterised so you can select 250–4000 SPS. Each frame carries a monotonically increasing sequence index internally, so any upstream sample loss is recorded rather than hidden.
 
@@ -75,11 +76,17 @@ The register-configuration sequence is a faithful port of `pieeg_server`'s `PiEE
 
 ## Install
 
-```
+```bash
 pip install pieeg-core
 ```
 
-Pre-built wheels are published for Linux (x86_64, aarch64, armv7 — including Raspberry Pi), Windows (x86_64) and macOS (arm64) on CPython 3.10–3.13.
+To upgrade an existing installation to the latest release:
+
+```bash
+pip install --upgrade pieeg-core
+```
+
+Pre-built wheels are published for Linux (x86_64, aarch64, armv7 — including Raspberry Pi with native hardware acquisition enabled) and Windows (x86_64) on CPython 3.11–3.13.
 
 ## Build from source
 
